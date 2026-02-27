@@ -1,0 +1,40 @@
+# Core dependencies
+asyncio>=3.4.3
+aiohttp>=3.9.0
+asyncpg>=0.29.0
+aiosqlite>=0.19.0
+redis>=5.0.0
+
+# Data processing
+numpy>=1.24.0
+pandas>=2.0.0
+
+# Web dashboard
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# News & NLP
+feedparser>=6.0.0
+newspaper3k>=0.2.8
+transformers>=4.35.0
+torch>=2.1.0
+
+# Utilities
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+websockets>=12.0
+requests>=2.31.0
+
+# Date/time
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Development
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+mypy>=1.6.0
+
+# Optional: For advanced sentiment analysis
+# textblob>=0.17.1
+# vaderSentiment>=3.3.2

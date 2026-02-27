@@ -1,0 +1,166 @@
+# Trading Strategies Configuration
+
+strategies:
+  # 策略1: 新闻-价格背离交易
+  sentiment_divergence:
+    name: "News-Price Divergence"
+    description: "当新闻情感与价格走势背离时进行反向交易"
+    enabled: true
+    priority: 1
+    
+    parameters:
+      # 价格变动阈值
+      price_change_threshold: 0.08      # 8%价格变动
+      
+      # 情感分析阈值
+      sentiment_threshold: -0.4         # 负面情感阈值
+      sentiment_divergence: 0.6         # 背离程度
+      
+      # 时间窗口
+      news_lookback_minutes: 60         # 查找1小时内的新闻
+      price_lookback_minutes: 30        # 价格变动窗口
+      
+      # 信号评分权重
+      weights:
+        price_momentum: 0.30
+        sentiment_strength: 0.25
+        volume_confirmation: 0.25
+        historical_similarity: 0.20
+    
+    entry_rules:
+      - "价格5分钟内变动 >8%"
+      - "相关新闻情感得分 >-0.4 (不太负面)"
+      - "价格与情感方向背离"
+      - "成交量 >3倍平均"
+    
+    exit_rules:
+      - "价格回归均值(50%回撤)"
+      - "持有时间 >4小时"
+      - "亏损 >5%"
+
+  # 策略2: 恐慌性抛售抄底
+  panic_buying:
+    name: "Panic Buying"
+    description: "检测市场恐慌情绪，在过度抛售时买入"
+    enabled: true
+    priority: 2
+    
+    parameters:
+      panic_indicators:
+        price_drop_5m: 0.10             # 5分钟下跌10%
+        volume_surge: 4.0               # 4倍成交量
+        order_book_imbalance: -0.7      # 订单簿极度不平衡
+      
+      confirmation:
+        min_news_count: 1               # 至少1条新闻
+        max_sentiment: -0.2             # 新闻不过度负面
+        social_media_fear: 0.70         # 社交媒体恐慌指数
+    
+    entry_rules:
+      - "价格在15分钟内下跌 >10%"
+      - "成交量激增 >4倍"
+      - "恐慌指数 >70"
+      - "新闻确认没有致命利空"
+    
+    position_management:
+      scaling: true                     # 分批建仓
+      scale_levels: [0.4, 0.3, 0.3]     # 分批比例
+      scale_triggers: [0, -0.03, -0.06] # 分批触发价位(相对于信号价格)
+
+  # 策略3: FOMO做空
+  fomo_shorting:
+    name: "FOMO Shorting"
+    description: "检测FOMO情绪，在价格过度上涨时做空"
+    enabled: true
+    priority: 2
+    
+    parameters:
+      fomo_indicators:
+        price_spike_5m: 0.10            # 5分钟上涨10%
+        volume_surge: 5.0               # 5倍成交量
+        social_media_greed: 0.75        # 贪婪指数
+      
+      confirmation:
+        rsi_overbought: 70              # RSI超买
+        funding_rate_spike: true        # 资金费率激增
+    
+    entry_rules:
+      - "价格在15分钟内上涨 >10%"
+      - "社交媒体情绪极度乐观"
+      - "成交量异常放大"
+      - "缺乏实质性利好支撑"
+
+  # 策略4: 流动性危机交易
+  liquidity_crisis:
+    name: "Liquidity Crisis"
+    description: "在大额订单导致流动性危机后交易"
+    enabled: true
+    priority: 3
+    
+    parameters:
+      liquidity_threshold:
+        spread_widening: 3.0            # 价差扩大3倍
+        depth_reduction: 0.5            # 订单簿深度减少50%
+        slippage_spike: 0.02            # 滑点激增2%
+      
+      recovery_indicators:
+        spread_normalization: 0.8       # 价差恢复80%
+        volume_resumption: 0.5          # 成交量恢复50%
+    
+    entry_rules:
+      - "检测到流动性危机信号"
+      - "价差在10分钟内开始收窄"
+      - "没有持续性大额卖压"
+
+# 市场分类设置
+categories:
+  crypto:
+    volatility_multiplier: 1.5          # 加密货币波动率更高
+    position_size_adjustment: 0.8       # 相应减小仓位
+    
+  politics:
+    event_sensitivity: 1.3              # 政治事件更敏感
+    news_weight: 1.4                    # 新闻权重更高
+    
+  sports:
+    momentum_factor: 1.2                # 动量因子
+    time_decay_acceleration: true       # 时间衰减加速
+    
+  entertainment:
+    social_media_weight: 1.5            # 社交媒体权重更高
+    sentiment_volatility: 1.3           # 情感波动更大
+
+# 新闻源配置
+news_sources:
+  high_credibility:
+    - "Reuters"
+    - "Bloomberg"
+    - "WSJ"
+    - "Financial Times"
+    weight: 1.5
+    
+  medium_credibility:
+    - "CoinDesk"
+    - "CoinTelegraph"
+    - "The Block"
+    weight: 1.2
+    
+  social_media:
+    - "Twitter"
+    - "Reddit"
+    sentiment_only: true                # 仅用于情感分析
+    weight: 0.8
+
+# 回测参数
+backtest:
+  period_days: 90
+  initial_capital: 10000
+  slippage: 0.001
+  commission: 0.002
+  
+  metrics:
+    - "sharpe_ratio"
+    - "max_drawdown"
+    - "win_rate"
+    - "profit_factor"
+    - "avg_trade_return"

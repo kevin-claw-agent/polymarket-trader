@@ -1,0 +1,130 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: polymarket-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: polymarket_trader
+      POSTGRES_USER: ${DB_USER:-trader}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-trader_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trader -d polymarket_trader"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: polymarket-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Main Trading System
+  trader:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: polymarket-trader
+    restart: unless-stopped
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=polymarket_trader
+      - DB_USER=${DB_USER:-trader}
+      - DB_PASSWORD=${DB_PASSWORD:-trader_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - NEWSAPI_KEY=${NEWSAPI_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - PYTHONPATH=/app
+    volumes:
+      - ../config:/app/config
+      - ../logs:/app/logs
+      - trader_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - polymarket-network
+
+  # Web Dashboard
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: polymarket-dashboard
+    restart: unless-stopped
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=polymarket_trader
+      - DB_USER=${DB_USER:-trader}
+      - DB_PASSWORD=${DB_PASSWORD:-trader_password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHONPATH=/app
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../config:/app/config
+    command: ["python", "-m", "src.dashboard.app"]
+    depends_on:
+      - postgres
+      - redis
+      - trader
+    networks:
+      - polymarket-network
+
+  # Optional: Grafana for monitoring
+  grafana:
+    image: grafana/grafana:latest
+    container_name: polymarket-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASS:-admin}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - postgres
+    networks:
+      - polymarket-network
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+  redis_data:
+  trader_data:
+  grafana_data:
+
+networks:
+  polymarket-network:
+    driver: bridge

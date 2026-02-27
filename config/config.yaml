@@ -1,0 +1,162 @@
+# Polymarket Event Trading System Configuration
+
+# API Keys (实际使用时请使用环境变量)
+polymarket:
+  api_endpoint: "https://clob.polymarket.com"
+  ws_endpoint: "wss://ws-subscriber.polymarket.com"
+  rpc_endpoint: "https://polygon-rpc.com"
+
+news:
+  newsapi_key: "${NEWSAPI_KEY}"
+  gdelt_enabled: true
+  rss_feeds:
+    - "https://feeds.reuters.com/reuters/topNews"
+    - "https://feeds.bloomberg.com/business/news.rss"
+    - "https://cointelegraph.com/rss"
+
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"
+
+discord:
+  webhook_url: "${DISCORD_WEBHOOK_URL}"
+
+# Database
+database:
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "polymarket_trader"
+    user: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+  redis:
+    host: "localhost"
+    port: 6379
+    db: 0
+
+# Monitoring Settings
+monitoring:
+  # 监控的市场列表 (为空则监控所有活跃市场)
+  markets: []
+  
+  # 价格监控参数
+  price_thresholds:
+    spike_5m: 0.05      # 5分钟波动 >5%
+    spike_1h: 0.10      # 1小时波动 >10%
+    spike_24h: 0.20     # 24小时波动 >20%
+  
+  # 成交量监控参数
+  volume_thresholds:
+    surge_ratio: 3.0    # 超过N倍平均成交量
+    min_volume_usd: 10000  # 最小成交量(USD)
+  
+  # 检查频率(秒)
+  check_interval: 30
+  
+  # 历史数据保留天数
+  data_retention_days: 90
+
+# Overreaction Detection
+signals:
+  enabled: true
+  
+  # 检测算法参数
+  detection:
+    # 新闻-价格背离阈值
+    sentiment_divergence_threshold: 0.5
+    
+    # 恐慌/贪婪指数阈值
+    panic_threshold: 70
+    greed_threshold: 70
+    
+    # 历史对比参数
+    lookback_periods: 30
+    similarity_threshold: 0.8
+  
+  # 信号生成参数
+  generator:
+    min_confidence: 60           # 最低置信度(%)
+    max_daily_signals: 10        # 每日最大信号数
+    cooldown_minutes: 30         # 同市场冷却时间(分钟)
+    
+    # 仓位大小计算
+    position_sizing:
+      base_size: 0.02            # 基础仓位(2%)
+      confidence_multiplier: 1.5 # 置信度乘数
+      max_size: 0.05             # 最大仓位(5%)
+
+# Risk Management
+risk:
+  enabled: true
+  
+  # 敞口限制
+  exposure:
+    max_per_market: 0.05         # 单市场最大5%
+    max_total: 0.50              # 总敞口最大50%
+    max_correlated: 0.15         # 相关市场组最大15%
+  
+  # 损失限制
+  loss_limits:
+    max_daily_loss: 0.02         # 单日最大亏损2%
+    max_weekly_loss: 0.05        # 单周最大亏损5%
+    emergency_stop_loss: 0.10    # 紧急止损10%
+  
+  # 熔断机制
+  circuit_breakers:
+    enabled: true
+    volatility_threshold: 0.30   # 30%波动触发熔断
+    cooldown_minutes: 60         # 熔断冷却时间
+
+# Alert Settings
+alerts:
+  enabled: true
+  
+  # 通知级别
+  levels:
+    info: true
+    warning: true
+    critical: true
+  
+  # 通知渠道
+  channels:
+    telegram: true
+    discord: true
+    email: false
+  
+  # 静默时段 (24小时制)
+  quiet_hours:
+    start: 23
+    end: 8
+
+# Dashboard
+dashboard:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+  refresh_interval: 5
+  auth:
+    enabled: false
+    username: "${DASHBOARD_USER}"
+    password: "${DASHBOARD_PASS}"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "logs/polymarket_trader.log"
+  max_size: "10MB"
+  backup_count: 5
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Paper Trading (模拟交易)
+paper_trading:
+  enabled: true
+  initial_balance: 10000  # USD
+  fees:
+    maker: 0.002
+    taker: 0.002
+
+# Live Trading (实盘交易)
+live_trading:
+  enabled: false
+  require_approval: true    # 需要手动确认
+  auto_execute: false       # 自动执行(需同时开启require_approval=false)
