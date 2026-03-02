@@ -368,6 +368,10 @@ class BacktestDataLoader:
                 return []
 
             self.run_summary['history']['api_downloads'] += 1
+                if self.use_simulated_history:
+                    return self._generate_simulated_history(market_id, market.get('current_price', 0.5), days)
+                return []
+
             parsed = self._normalize_history(payload.get('history', []))
             if parsed:
                 with open(cache_path, 'w', encoding='utf-8') as f:
@@ -379,6 +383,7 @@ class BacktestDataLoader:
             self.run_summary['history']['failed'] += 1
             if self.use_simulated_history:
                 self.run_summary['history']['simulated_used'] += 1
+            if self.use_simulated_history:
                 return self._generate_simulated_history(market.get('id', 'unknown'), market.get('current_price', 0.5), days)
             return []
 
