@@ -7,6 +7,8 @@ import asyncio
 import hashlib
 import aiohttp
 import json
+import os
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import logging
@@ -30,8 +32,17 @@ class BacktestDataLoader:
         self.min_volume = self.config.get('min_volume', 100000)
         self.min_traders = self.config.get('min_traders', 50)
         self.lookback_days = self.config.get('lookback_days', 90)
+        self.request_interval_seconds = float(self.config.get('request_interval_seconds', 0.2))
+        self.max_retries = int(self.config.get('max_retries', 4))
+        self.retry_backoff_seconds = float(self.config.get('retry_backoff_seconds', 0.8))
+        self.cache_dir = self.config.get('cache_dir', 'backtest_data_cache')
+        self.history_interval = self.config.get('history_interval', '1h')
+        self.use_simulated_history = bool(self.config.get('use_simulated_history', False))
         
         self.session: Optional[aiohttp.ClientSession] = None
+        self._last_request_ts = 0.0
+        self._request_lock = asyncio.Lock()
+        os.makedirs(self.cache_dir, exist_ok=True)
         
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create HTTP session"""
@@ -96,17 +107,50 @@ class BacktestDataLoader:
                 'limit': limit
             }
             
-            async with session.get(url, params=params) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data.get('data', [])
-                else:
-                    logger.error(f"API error {response.status}")
-                    return []
+            data = await self._request_json(url, params=params)
+            if data:
+                return data.get('data', [])
+            return []
                     
         except Exception as e:
             logger.error(f"Error fetching markets: {e}")
             return []
+
+    async def _request_json(self, url: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """HTTP GET with retry/backoff and global rate limiting."""
+        session = await self._get_session()
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                async with self._request_lock:
+                    wait_s = self.request_interval_seconds - (time.monotonic() - self._last_request_ts)
+                    if wait_s > 0:
+                        await asyncio.sleep(wait_s)
+
+                    async with session.get(url, params=params) as response:
+                        self._last_request_ts = time.monotonic()
+
+                        if response.status == 200:
+                            return await response.json()
+
+                        body = await response.text()
+                        logger.warning(
+                            "Request failed (%s) %s params=%s body=%s",
+                            response.status,
+                            url,
+                            params,
+                            body[:200],
+                        )
+
+                        if response.status not in {408, 409, 425, 429, 500, 502, 503, 504}:
+                            return None
+            except Exception as e:
+                logger.warning("Request error on attempt %s/%s for %s: %s", attempt, self.max_retries, url, e)
+
+            if attempt < self.max_retries:
+                await asyncio.sleep(self.retry_backoff_seconds * attempt)
+
+        return None
     
     def _filter_markets(
         self,
@@ -183,6 +227,11 @@ class BacktestDataLoader:
             
             return {
                 'id': market_id,
+                'primary_token_id': tokens[0].get('token_id') if tokens else None,
+                'yes_token_id': next(
+                    (t.get('token_id') for t in tokens if str(t.get('outcome', '')).lower() == 'yes'),
+                    None,
+                ),
                 'slug': market.get('market_slug', ''),
                 'question': market.get('question', ''),
                 'description': market.get('description', ''),
@@ -201,45 +250,84 @@ class BacktestDataLoader:
             logger.error(f"Error processing market: {e}")
             return None
     
+    def _get_history_cache_path(self, market_id: str, token_id: str, days: int) -> str:
+        cache_key = hashlib.sha256(
+            f"{market_id}:{token_id}:{days}:{self.history_interval}".encode('utf-8')
+        ).hexdigest()
+        return os.path.join(self.cache_dir, f"history_{cache_key}.json")
+
+    def _normalize_history(self, history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Normalize CLOB price history payload into backtest points."""
+        normalized: List[Dict[str, Any]] = []
+        for point in history:
+            ts = point.get('t') or point.get('timestamp') or point.get('time')
+            price = point.get('p') or point.get('price') or point.get('close')
+            volume = point.get('v') or point.get('volume') or 0
+
+            if ts is None or price is None:
+                continue
+
+            ts_value = float(ts)
+            if ts_value > 1e12:  # milliseconds
+                ts_value /= 1000
+
+            normalized.append(
+                {
+                    'timestamp': datetime.utcfromtimestamp(ts_value).isoformat(),
+                    'price': float(price),
+                    'volume': float(volume),
+                }
+            )
+
+        normalized.sort(key=lambda x: x['timestamp'])
+        return normalized
+
     async def fetch_historical_prices(
         self,
-        market_id: str,
+        market: Dict[str, Any],
         days: int = 90
     ) -> List[Dict[str, Any]]:
-        """
-        Fetch historical price data for a market
-        
-        This is a simulated implementation - in production, you would:
-        - Query your database for stored historical data
-        - Or use a data provider API
-        """
+        """Fetch and cache real historical price data for a market token."""
         try:
-            # For backtesting, we simulate historical data
-            # In production, replace with actual historical data API
-            session = await self._get_session()
-            
-            # Try to get from API
-            url = f"{self.api_endpoint}/markets/{market_id}"
-            
-            async with session.get(url) as response:
-                if response.status == 200:
-                    data = await response.json()
+            market_id = market['id']
+            token_id = market.get('yes_token_id') or market.get('primary_token_id')
+            if not token_id:
+                logger.warning("No token_id found for market %s", market_id)
+                if str(market_id).startswith('offline_market_'):
+                    return self._generate_simulated_history(market_id, market.get('current_price', 0.5), days)
+                return []
 
-                    # Generate simulated historical data
-                    # In production, this would be real historical data
-                    current_price = data.get('price', 0.5)
-                    prices = self._generate_simulated_history(
-                        market_id, current_price, days
-                    )
-                    return prices
-                else:
-                    logger.warning(f"Could not fetch market {market_id}, using simulated history")
-                    return self._generate_simulated_history(market_id, 0.5, days)
-                    
+            cache_path = self._get_history_cache_path(market_id, token_id, days)
+            if os.path.exists(cache_path):
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+
+            now = datetime.utcnow()
+            params = {
+                'market': token_id,
+                'interval': self.history_interval,
+                'startTs': int((now - timedelta(days=days)).timestamp()),
+                'endTs': int(now.timestamp()),
+            }
+            url = f"{self.api_endpoint}/prices-history"
+            payload = await self._request_json(url, params=params)
+            if not payload:
+                if self.use_simulated_history:
+                    return self._generate_simulated_history(market_id, market.get('current_price', 0.5), days)
+                return []
+
+            parsed = self._normalize_history(payload.get('history', []))
+            if parsed:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(parsed, f)
+            return parsed
+
         except Exception as e:
-            logger.error(f"Error fetching historical prices: {e}; using simulated history")
-            return self._generate_simulated_history(market_id, 0.5, days)
-    
+            logger.error(f"Error fetching historical prices: {e}")
+            if self.use_simulated_history:
+                return self._generate_simulated_history(market.get('id', 'unknown'), market.get('current_price', 0.5), days)
+            return []
+
     def _generate_simulated_history(
         self,
         market_id: str,
@@ -323,7 +411,7 @@ class BacktestDataLoader:
         price_data = {}
         for market in markets:
             market_id = market['id']
-            prices = await self.fetch_historical_prices(market_id, days=self.lookback_days)
+            prices = await self.fetch_historical_prices(market, days=self.lookback_days)
             
             if prices:
                 # Filter by date range
@@ -333,7 +421,6 @@ class BacktestDataLoader:
                 ]
                 price_data[market_id] = filtered_prices
             
-            await asyncio.sleep(0.1)  # Rate limiting
         
         logger.info(f"Loaded price data for {len(price_data)} markets")
         
