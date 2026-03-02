@@ -38,3 +38,7 @@ mypy>=1.6.0
 # Optional: For advanced sentiment analysis
 # textblob>=0.17.1
 # vaderSentiment>=3.3.2
+
+# Backtest visualization (optional)
+matplotlib>=3.8.0
+chart.js>=3.9.1
