@@ -1,68 +1,39 @@
-# Backtest Configuration for Polymarket Trader
-
-# Data settings
 backtest:
-  # Initial capital for backtest
   initial_capital: 10000
-  
-  # Position sizing
-  position_size: 0.02  # 2% of portfolio per trade
-  max_positions: 10    # Maximum concurrent positions
-  
-  # Fees
-  fee_rate: 0.002      # 0.2% per trade (maker/taker)
-  
-  # Risk management
+  position_size: 0.01
+  max_positions: 10
+  fee_rate: 0.002
   stop_loss_enabled: true
   take_profit_enabled: true
-  max_hold_hours: 48   # Maximum hold time
-
+  max_hold_hours: 48
 data:
-  # Market filters
-  min_liquidity: 50000      # Minimum $50k liquidity
-  min_volume: 100000        # Minimum $100k volume
-  min_traders: 50           # Minimum 50 traders
-  lookback_days: 90         # Days of historical data
-  
-  # API settings
-  api_endpoint: "https://clob.polymarket.com"
-  
-  # Categories to include
+  min_liquidity: 50000
+  min_volume: 100000
+  min_traders: 50
+  lookback_days: 90
+  api_endpoint: https://clob.polymarket.com
   target_categories:
-    - politics
-    - finance
-    - financial
-    - economics
-    - business
-  
-  # Maximum markets to test
+  - politics
+  - finance
+  - financial
+  - economics
+  - business
   max_markets: 50
-
 strategy:
-  # Detection parameters
-  price_spike_threshold: 0.05     # 5% price change
-  volume_surge_threshold: 3.0     # 3x average volume
-  lookback_periods: 20            # 20 periods for MA
-  
-  # Mean reversion
+  price_spike_threshold: 0.05
+  volume_surge_threshold: 2.0
+  lookback_periods: 20
   mean_reversion_threshold: 0.02
-  min_zscore: 2.0                 # Minimum Z-score for signal
-  
-  # Signal parameters
-  min_confidence: 60              # Minimum confidence (%)
-  cooldown_bars: 6                # Hours between signals for same market
-  
-  # Momentum strategy (optional)
+  min_zscore: 2.2
+  min_confidence: 60
+  cooldown_bars: 6
   momentum_lookback: 5
   momentum_threshold: 0.02
-
 reporting:
-  output_dir: "backtest_results"
+  output_dir: backtest_results
   save_json: true
   save_html: true
   generate_charts: true
-
-# Date range (leave empty for default)
 date_range:
-  start_date: null  # Format: "2024-01-01"
-  end_date: null    # Format: "2024-12-31"
+  start_date: null
+  end_date: null

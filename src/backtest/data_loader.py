@@ -4,6 +4,7 @@ Loads and prepares historical market data for backtesting
 """
 
 import asyncio
+import hashlib
 import aiohttp
 import json
 from datetime import datetime, timedelta
@@ -223,7 +224,7 @@ class BacktestDataLoader:
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
-                    
+
                     # Generate simulated historical data
                     # In production, this would be real historical data
                     current_price = data.get('price', 0.5)
@@ -232,12 +233,12 @@ class BacktestDataLoader:
                     )
                     return prices
                 else:
-                    logger.warning(f"Could not fetch market {market_id}")
-                    return []
+                    logger.warning(f"Could not fetch market {market_id}, using simulated history")
+                    return self._generate_simulated_history(market_id, 0.5, days)
                     
         except Exception as e:
-            logger.error(f"Error fetching historical prices: {e}")
-            return []
+            logger.error(f"Error fetching historical prices: {e}; using simulated history")
+            return self._generate_simulated_history(market_id, 0.5, days)
     
     def _generate_simulated_history(
         self,
@@ -250,7 +251,8 @@ class BacktestDataLoader:
         
         NOTE: This is for demonstration. In production, use real historical data.
         """
-        np.random.seed(hash(market_id) % 2**32)
+        seed = int.from_bytes(hashlib.sha256(market_id.encode('utf-8')).digest()[:4], 'big')
+        np.random.seed(seed)
         
         prices = []
         start_date = datetime.utcnow() - timedelta(days=days)
@@ -304,6 +306,11 @@ class BacktestDataLoader:
         
         # Fetch markets
         markets = await self.fetch_markets_for_backtest()
+
+        # Network-restricted fallback: generate synthetic but reproducible markets.
+        if not markets:
+            logger.warning("Falling back to synthetic markets for offline backtest")
+            markets = self._generate_fallback_markets(max_markets)
         
         if not markets:
             logger.warning("No markets found for backtest")
@@ -338,6 +345,34 @@ class BacktestDataLoader:
                 'end': end_date.isoformat()
             }
         }
+
+    def _generate_fallback_markets(self, max_markets: int) -> List[Dict[str, Any]]:
+        """Generate deterministic synthetic markets when external API is unavailable."""
+        categories = self.config.get('target_categories', self.TARGET_CATEGORIES)
+        fallback_count = min(max_markets, 30)
+        markets: List[Dict[str, Any]] = []
+
+        for i in range(fallback_count):
+            category = categories[i % len(categories)] if categories else 'general'
+            markets.append(
+                {
+                    'id': f'offline_market_{i + 1:03d}',
+                    'slug': f'offline-market-{i + 1:03d}',
+                    'question': f'Offline synthetic {category} market #{i + 1}',
+                    'description': 'Generated market for offline backtest tuning',
+                    'category': category,
+                    'current_price': 0.5,
+                    'volume': float(100000 + i * 5000),
+                    'liquidity': float(50000 + i * 2000),
+                    'trader_count': 100 + i,
+                    'end_date': None,
+                    'resolution': None,
+                    'active': True,
+                    'closed': False,
+                }
+            )
+
+        return markets
     
     async def close(self):
         """Close connections"""
