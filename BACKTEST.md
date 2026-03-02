@@ -9,6 +9,7 @@ Price-only backtesting system for Polymarket trading strategies on Politics/Fina
 - **Performance Metrics**: Sharpe ratio, max drawdown, win rate, profit factor, and more
 - **Visual Reports**: Interactive HTML reports with equity curves and trade analysis
 - **Multiple Strategies**: Mean reversion and momentum strategies
+- **Real Historical Data + Cache**: Prefer CLOB `prices-history` real data and cache locally for faster config iteration
 
 ## Quick Start
 
@@ -191,7 +192,9 @@ class MyStrategy(PriceOnlyStrategy):
 
 ## Notes
 
-- **Simulated Data**: The current implementation generates simulated historical data for demonstration. In production, connect to a real historical data source.
+- **Real Data First**: Backtest will download real historical prices from Polymarket CLOB and reuse local cache (`backtest_data_cache/`) to accelerate repeated tests.
+- **Request Throttling**: Data loader enforces request interval + retry backoff to reduce API pressure and avoid transient rate-limit failures.
+- **Optional Synthetic Fallback**: Can be enabled with `data.use_simulated_history: true` for offline debugging only.
 - **Politics/Finance Focus**: Markets are filtered for politics and finance categories only.
 - **No News Data**: This backtest uses only price/volume data, no sentiment analysis.
 
