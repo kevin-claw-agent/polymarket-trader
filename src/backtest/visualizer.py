@@ -384,6 +384,8 @@ class BacktestVisualizer:
         rows = []
         for trade in trades:
             pnl_class = 'positive' if trade['pnl'] > 0 else 'negative'
+            exit_price = trade.get('exit_price')
+            exit_price_display = f"{exit_price:.4f}" if exit_price is not None else '-'
             rows.append(f"""
                 <tr>
                     <td>{trade['id']}</td>
@@ -391,7 +393,7 @@ class BacktestVisualizer:
                     <td>{trade['signal_type']}</td>
                     <td>{trade['action']}</td>
                     <td>{trade['entry_price']:.4f}</td>
-                    <td>{trade['exit_price']:.4f if trade['exit_price'] else '-'}</td>
+                    <td>{exit_price_display}</td>
                     <td>{trade['confidence']:.0f}%</td>
                     <td class="{pnl_class}">${trade['pnl']:.2f}</td>
                     <td class="{pnl_class}">{trade['pnl_percent']:.2f}%</td>
