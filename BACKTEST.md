@@ -201,3 +201,12 @@ class MyStrategy(PriceOnlyStrategy):
 ## License
 
 MIT License - See main project LICENSE
+
+
+## Run Summary
+
+每次运行会在日志与 JSON 报告 metadata 中输出 `run_summary`，包含：
+- network: DNS/IPv4 检查结果
+- markets: 请求市场数、真实市场数、fallback 数、实际选中数
+- history: 历史数据缓存命中、API 下载数、模拟数据使用数、失败数
+
