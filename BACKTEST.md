@@ -195,6 +195,7 @@ class MyStrategy(PriceOnlyStrategy):
 - **Real Data First**: Backtest will download real historical prices from Polymarket CLOB and reuse local cache (`backtest_data_cache/`) to accelerate repeated tests.
 - **Request Throttling**: Data loader enforces request interval + retry backoff to reduce API pressure and avoid transient rate-limit failures.
 - **Optional Synthetic Fallback**: Generated fallback markets are disabled by default (`data.enable_generated_fallback: false`). Enable only for offline debugging.
+- **Optional Synthetic Fallback**: Can be enabled with `data.use_simulated_history: true` for offline debugging only.
 - **Politics/Finance Focus**: Markets are filtered for politics and finance categories only.
 - **No News Data**: This backtest uses only price/volume data, no sentiment analysis.
 
@@ -209,4 +210,5 @@ MIT License - See main project LICENSE
 - network: DNS/IPv4 检查结果
 - markets: 请求市场数、真实市场数、fallback 数、实际选中数
 - history: 历史数据缓存命中、API 下载数、模拟数据使用数、失败数，以及 `history_empty_count`（无历史返回的市场数）、`date_filtered_out_count`（有历史但被回测日期范围过滤掉的市场数）；markets 还包含 `closed_excluded`、`out_of_window_excluded` 便于定位候选市场被剔除原因。
+- history: 历史数据缓存命中、API 下载数、模拟数据使用数、失败数
 

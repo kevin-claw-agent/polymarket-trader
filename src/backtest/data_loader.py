@@ -11,6 +11,7 @@ import os
 import time
 import socket
 from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import logging
 import numpy as np
@@ -42,6 +43,7 @@ class BacktestDataLoader:
         self.use_simulated_history = bool(self.config.get('use_simulated_history', False))
         self.enable_generated_fallback = bool(self.config.get('enable_generated_fallback', False))
         self.exclude_closed_markets = bool(self.config.get('exclude_closed_markets', True))
+        self.use_simulated_history = bool(self.config.get('use_simulated_history', False))
         
         self.session: Optional[aiohttp.ClientSession] = None
         self._last_request_ts = 0.0
@@ -53,6 +55,8 @@ class BacktestDataLoader:
             'network': {'status': 'unknown', 'detail': ''},
             'markets': {'requested': 0, 'real_fetched': 0, 'fallback_generated': 0, 'selected': 0, 'closed_excluded': 0, 'out_of_window_excluded': 0},
             'history': {'markets_with_prices': 0, 'cache_hits': 0, 'api_downloads': 0, 'simulated_used': 0, 'failed': 0, 'history_empty_count': 0, 'date_filtered_out_count': 0},
+            'markets': {'requested': 0, 'real_fetched': 0, 'fallback_generated': 0, 'selected': 0},
+            'history': {'markets_with_prices': 0, 'cache_hits': 0, 'api_downloads': 0, 'simulated_used': 0, 'failed': 0},
         }
         
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -126,6 +130,7 @@ class BacktestDataLoader:
                 logger.warning("No markets after excluding closed markets; retrying with closed markets included")
                 filtered_markets = self._filter_markets(markets, categories, exclude_closed=False)
 
+            filtered_markets = self._filter_markets(markets, categories)
             self.run_summary['markets']['real_fetched'] = len(filtered_markets)
             
             logger.info(f"Fetched {len(filtered_markets)} markets for backtest "
@@ -400,6 +405,16 @@ class BacktestDataLoader:
                 history_points.extend(payload.get('history', []))
 
             if not history_points:
+            now = datetime.utcnow()
+            params = {
+                'market': token_id,
+                'interval': self.history_interval,
+                'startTs': int((now - timedelta(days=days)).timestamp()),
+                'endTs': int(now.timestamp()),
+            }
+            url = f"{self.api_endpoint}/prices-history"
+            payload = await self._request_json(url, params=params)
+            if not payload:
                 self.run_summary['history']['failed'] += 1
                 if self.use_simulated_history:
                     self.run_summary['history']['simulated_used'] += 1
@@ -411,6 +426,13 @@ class BacktestDataLoader:
                 # de-duplicate timestamps across chunk boundaries
                 deduped = {p['timestamp']: p for p in parsed}
                 parsed = [deduped[k] for k in sorted(deduped.keys())]
+            self.run_summary['history']['api_downloads'] += 1
+                if self.use_simulated_history:
+                    return self._generate_simulated_history(market_id, market.get('current_price', 0.5), days)
+                return []
+
+            parsed = self._normalize_history(payload.get('history', []))
+            if parsed:
                 with open(cache_path, 'w', encoding='utf-8') as f:
                     json.dump(parsed, f)
             return parsed
@@ -420,6 +442,7 @@ class BacktestDataLoader:
             self.run_summary['history']['failed'] += 1
             if self.use_simulated_history:
                 self.run_summary['history']['simulated_used'] += 1
+            if self.use_simulated_history:
                 return self._generate_simulated_history(market.get('id', 'unknown'), market.get('current_price', 0.5), days)
             return []
 
@@ -523,6 +546,12 @@ class BacktestDataLoader:
         
         # Drop markets that do not overlap requested backtest window.
         window_markets: List[Dict[str, Any]] = []
+        # Limit markets
+        markets = markets[:max_markets]
+        self.run_summary['markets']['selected'] = len(markets)
+        
+        # Fetch historical prices for each market
+        price_data = {}
         for market in markets:
             if self._market_overlaps_window(market, start_date):
                 window_markets.append(market)
@@ -583,6 +612,14 @@ class BacktestDataLoader:
             self.run_summary['history']['simulated_used'] += len(markets)
 
         self.run_summary['markets']['selected'] = len(markets)
+            
+            if prices:
+                # Filter by date range
+                filtered_prices = [
+                    p for p in prices
+                    if start_date <= datetime.fromisoformat(p['timestamp']) <= end_date
+                ]
+                price_data[market_id] = filtered_prices
             
         
         self.run_summary['history']['markets_with_prices'] = len(price_data)
