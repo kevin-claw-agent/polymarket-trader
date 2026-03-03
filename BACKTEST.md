@@ -9,6 +9,7 @@ Price-only backtesting system for Polymarket trading strategies on Politics/Fina
 - **Performance Metrics**: Sharpe ratio, max drawdown, win rate, profit factor, and more
 - **Visual Reports**: Interactive HTML reports with equity curves and trade analysis
 - **Multiple Strategies**: Mean reversion and momentum strategies
+- **Real Historical Data + Cache**: Prefer CLOB `prices-history` real data and cache locally for faster config iteration
 
 ## Quick Start
 
@@ -191,10 +192,21 @@ class MyStrategy(PriceOnlyStrategy):
 
 ## Notes
 
-- **Simulated Data**: The current implementation generates simulated historical data for demonstration. In production, connect to a real historical data source.
+- **Real Data First**: Backtest will download real historical prices from Polymarket CLOB and reuse local cache (`backtest_data_cache/`) to accelerate repeated tests.
+- **Request Throttling**: Data loader enforces request interval + retry backoff to reduce API pressure and avoid transient rate-limit failures.
+- **Optional Synthetic Fallback**: Generated fallback markets are disabled by default (`data.enable_generated_fallback: false`). Enable only for offline debugging.
 - **Politics/Finance Focus**: Markets are filtered for politics and finance categories only.
 - **No News Data**: This backtest uses only price/volume data, no sentiment analysis.
 
 ## License
 
 MIT License - See main project LICENSE
+
+
+## Run Summary
+
+每次运行会在日志与 JSON 报告 metadata 中输出 `run_summary`，包含：
+- network: DNS/IPv4 检查结果
+- markets: 请求市场数、真实市场数、fallback 数、实际选中数
+- history: 历史数据缓存命中、API 下载数、模拟数据使用数、失败数，以及 `history_empty_count`（无历史返回的市场数）、`date_filtered_out_count`（有历史但被回测日期范围过滤掉的市场数）；markets 还包含 `closed_excluded`、`out_of_window_excluded` 便于定位候选市场被剔除原因。
+

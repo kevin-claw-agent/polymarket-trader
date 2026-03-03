@@ -67,7 +67,10 @@ async def run_backtest(config: dict, strategy_name: str = 'price_only'):
             logger.error("No markets found for backtest. Check filters.")
             return
 
+        run_summary = backtest_data.get('run_summary', {})
         logger.info(f"Loaded {len(backtest_data['markets'])} markets")
+        if run_summary:
+            logger.info(f"Data loading summary: {json.dumps(run_summary, ensure_ascii=False)}")
         for m in backtest_data['markets'][:5]:
             logger.info(f"  - {m['question'][:60]}... ({m['category']}, ${m['volume']:,.0f} vol)")
 
@@ -131,7 +134,8 @@ async def run_backtest(config: dict, strategy_name: str = 'price_only'):
                 metadata={
                     'config': config,
                     'markets_tested': len(backtest_data['markets']),
-                    'date_range': backtest_data.get('date_range')
+                    'date_range': backtest_data.get('date_range'),
+                    'run_summary': backtest_data.get('run_summary', {})
                 }
             )
             json_path = reporter.save_report(report, f"report_{strategy_name}_{timestamp}.json")
