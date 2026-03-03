@@ -13,11 +13,14 @@ data:
   lookback_days: 90
   api_endpoint: https://clob.polymarket.com
   history_interval: 1h
+  history_chunk_days: 14
   request_interval_seconds: 0.25
   max_retries: 4
   retry_backoff_seconds: 0.8
   cache_dir: backtest_data_cache
   use_simulated_history: false
+  enable_generated_fallback: false
+  exclude_closed_markets: true
   target_categories:
   - politics
   - finance

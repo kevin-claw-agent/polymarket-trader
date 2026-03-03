@@ -10,6 +10,7 @@ import json
 import os
 import time
 import socket
+from datetime import datetime, timedelta, timezone
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import logging
@@ -38,6 +39,10 @@ class BacktestDataLoader:
         self.retry_backoff_seconds = float(self.config.get('retry_backoff_seconds', 0.8))
         self.cache_dir = self.config.get('cache_dir', 'backtest_data_cache')
         self.history_interval = self.config.get('history_interval', '1h')
+        self.history_chunk_days = int(self.config.get('history_chunk_days', 14))
+        self.use_simulated_history = bool(self.config.get('use_simulated_history', False))
+        self.enable_generated_fallback = bool(self.config.get('enable_generated_fallback', False))
+        self.exclude_closed_markets = bool(self.config.get('exclude_closed_markets', True))
         self.use_simulated_history = bool(self.config.get('use_simulated_history', False))
         
         self.session: Optional[aiohttp.ClientSession] = None
@@ -48,6 +53,8 @@ class BacktestDataLoader:
         self.run_summary: Dict[str, Any] = {
             'api_endpoint': self.api_endpoint,
             'network': {'status': 'unknown', 'detail': ''},
+            'markets': {'requested': 0, 'real_fetched': 0, 'fallback_generated': 0, 'selected': 0, 'closed_excluded': 0, 'out_of_window_excluded': 0},
+            'history': {'markets_with_prices': 0, 'cache_hits': 0, 'api_downloads': 0, 'simulated_used': 0, 'failed': 0, 'history_empty_count': 0, 'date_filtered_out_count': 0},
             'markets': {'requested': 0, 'real_fetched': 0, 'fallback_generated': 0, 'selected': 0},
             'history': {'markets_with_prices': 0, 'cache_hits': 0, 'api_downloads': 0, 'simulated_used': 0, 'failed': 0},
         }
@@ -116,6 +123,13 @@ class BacktestDataLoader:
             if categories is None:
                 categories = self.TARGET_CATEGORIES
             
+            filtered_markets = self._filter_markets(markets, categories, exclude_closed=self.exclude_closed_markets)
+
+            # If strict closed-market exclusion yields nothing, auto-relax to recover usable history datasets.
+            if not filtered_markets and self.exclude_closed_markets:
+                logger.warning("No markets after excluding closed markets; retrying with closed markets included")
+                filtered_markets = self._filter_markets(markets, categories, exclude_closed=False)
+
             filtered_markets = self._filter_markets(markets, categories)
             self.run_summary['markets']['real_fetched'] = len(filtered_markets)
             
@@ -191,13 +205,20 @@ class BacktestDataLoader:
     def _filter_markets(
         self,
         markets: List[Dict],
-        categories: List[str]
+        categories: List[str],
+        exclude_closed: Optional[bool] = None
     ) -> List[Dict]:
         """Filter markets by category and quality criteria"""
         filtered = []
-        
+        if exclude_closed is None:
+            exclude_closed = self.exclude_closed_markets
+
         for market in markets:
             try:
+                if exclude_closed and bool(market.get('closed')):
+                    self.run_summary['markets']['closed_excluded'] += 1
+                    continue
+
                 # Check category (API often has empty `category`; fallback to tags/event/question text)
                 tags = market.get('tags') or []
                 events = market.get('events') or []
@@ -351,6 +372,39 @@ class BacktestDataLoader:
                 with open(cache_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
 
+            url = f"{self.api_endpoint}/prices-history"
+            now = datetime.utcnow()
+            market_end = self._parse_iso_datetime(market.get('end_date'))
+            anchor_end = market_end if market_end and market_end < now else now
+            start_ts = int((anchor_end - timedelta(days=days)).timestamp())
+            end_ts = int(anchor_end.timestamp())
+
+            history_points: List[Dict[str, Any]] = []
+            chunk_seconds = max(self.history_chunk_days, 1) * 24 * 3600
+
+            # CLOB prices-history enforces max time span per request.
+            for chunk_start in range(start_ts, end_ts, chunk_seconds):
+                chunk_end = min(chunk_start + chunk_seconds, end_ts)
+                params = {
+                    'market': token_id,
+                    'interval': self.history_interval,
+                    'startTs': chunk_start,
+                    'endTs': chunk_end,
+                }
+                payload = await self._request_json(url, params=params)
+                if payload is None:
+                    logger.warning(
+                        "Failed to fetch history chunk market=%s startTs=%s endTs=%s",
+                        market_id,
+                        chunk_start,
+                        chunk_end,
+                    )
+                    continue
+
+                self.run_summary['history']['api_downloads'] += 1
+                history_points.extend(payload.get('history', []))
+
+            if not history_points:
             now = datetime.utcnow()
             params = {
                 'market': token_id,
@@ -367,6 +421,11 @@ class BacktestDataLoader:
                     return self._generate_simulated_history(market_id, market.get('current_price', 0.5), days)
                 return []
 
+            parsed = self._normalize_history(history_points)
+            if parsed:
+                # de-duplicate timestamps across chunk boundaries
+                deduped = {p['timestamp']: p for p in parsed}
+                parsed = [deduped[k] for k in sorted(deduped.keys())]
             self.run_summary['history']['api_downloads'] += 1
                 if self.use_simulated_history:
                     return self._generate_simulated_history(market_id, market.get('current_price', 0.5), days)
@@ -432,6 +491,26 @@ class BacktestDataLoader:
         
         return prices
     
+    def _market_time_window(self, market: Dict[str, Any], default_start: datetime, default_end: datetime) -> tuple[datetime, datetime]:
+        """Return per-market effective backtest window, anchored to close time when needed."""
+        market_end = self._parse_iso_datetime(market.get('end_date'))
+
+        if market_end and market_end < default_start:
+            market_window_end = market_end
+            market_window_start = market_end - timedelta(days=self.lookback_days)
+            return market_window_start, market_window_end
+
+        if market_end and market_end < default_end:
+            return default_start, market_end
+
+        return default_start, default_end
+
+    def _market_overlaps_window(self, market: Dict[str, Any], start_date: datetime) -> bool:
+        end_date = self._parse_iso_datetime(market.get('end_date'))
+        if end_date is None:
+            return True
+        return end_date >= start_date
+
     async def load_backtest_data(
         self,
         start_date: Optional[datetime] = None,
@@ -455,8 +534,8 @@ class BacktestDataLoader:
         self.run_summary['markets']['requested'] = max_markets
         markets = await self.fetch_markets_for_backtest()
 
-        # Network-restricted fallback: generate synthetic but reproducible markets.
-        if not markets:
+        # Optional network-restricted fallback: synthetic markets.
+        if not markets and self.enable_generated_fallback:
             logger.warning("Falling back to synthetic markets for offline backtest")
             markets = self._generate_fallback_markets(max_markets)
             self.run_summary['markets']['fallback_generated'] = len(markets)
@@ -465,6 +544,8 @@ class BacktestDataLoader:
             logger.warning("No markets found for backtest")
             return {'markets': [], 'price_data': {}}
         
+        # Drop markets that do not overlap requested backtest window.
+        window_markets: List[Dict[str, Any]] = []
         # Limit markets
         markets = markets[:max_markets]
         self.run_summary['markets']['selected'] = len(markets)
@@ -472,8 +553,65 @@ class BacktestDataLoader:
         # Fetch historical prices for each market
         price_data = {}
         for market in markets:
+            if self._market_overlaps_window(market, start_date):
+                window_markets.append(market)
+            else:
+                self.run_summary['markets']['out_of_window_excluded'] += 1
+
+        if not window_markets and markets:
+            logger.warning(
+                "All candidate markets are outside requested window; auto-adapting to market close time windows"
+            )
+            window_markets = markets
+
+        markets = window_markets
+
+        # Fetch historical prices and keep only markets with usable data.
+        selected_markets: List[Dict[str, Any]] = []
+        price_data: Dict[str, List[Dict[str, Any]]] = {}
+
+        for market in markets:
+            if len(selected_markets) >= max_markets:
+                break
+
             market_id = market['id']
             prices = await self.fetch_historical_prices(market, days=self.lookback_days)
+
+            if not prices:
+                self.run_summary['history']['history_empty_count'] += 1
+                continue
+
+            # Filter by per-market adaptive date range (uses close time for old/closed markets).
+            market_start, market_end = self._market_time_window(market, start_date, end_date)
+            filtered_prices = [
+                p for p in prices
+                if market_start <= datetime.fromisoformat(p['timestamp']) <= market_end
+            ]
+
+            if not filtered_prices:
+                self.run_summary['history']['date_filtered_out_count'] += 1
+                continue
+
+            selected_markets.append(market)
+            price_data[market_id] = filtered_prices
+
+        markets = selected_markets
+
+        if not markets and self.enable_generated_fallback:
+            logger.warning("No markets with usable real history; falling back to synthetic markets")
+            markets = self._generate_fallback_markets(max_markets)
+            price_data = {
+                m['id']: self._generate_simulated_history(
+                    m['id'],
+                    m.get('current_price', 0.5),
+                    self.lookback_days,
+                )
+                for m in markets
+            }
+            self.run_summary['markets']['fallback_generated'] = len(markets)
+            self.run_summary['history']['simulated_used'] += len(markets)
+
+        self.run_summary['markets']['selected'] = len(markets)
             
             if prices:
                 # Filter by date range
@@ -535,3 +673,16 @@ class BacktestDataLoader:
         """Close connections"""
         if self.session and not self.session.closed:
             await self.session.close()
+    @staticmethod
+    def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            normalized = value.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(normalized)
+            # Convert aware datetime to naive UTC for internal comparisons.
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+        except Exception:
+            return None
